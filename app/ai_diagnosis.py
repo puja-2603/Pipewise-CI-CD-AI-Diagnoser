@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from groq import Groq
 from app.models import Diagnosis
 
@@ -45,3 +46,30 @@ def estimate_cost_usd(tokens_used: int) -> float:
     # approximate rate for simplicity — update if Groq's pricing changes.
     blended_rate_per_million = 0.70
     return round((tokens_used / 1_000_000) * blended_rate_per_million, 6)
+
+
+def extract_error_signature(log_text: str, max_lines: int = 5) -> str:
+    """
+    Pull the most likely 'actual error' lines out of a raw log, so we have
+    something STABLE to fingerprint/embed — unlike the LLM's root_cause
+    text, which is reworded slightly every time it's generated and is
+    therefore unreliable for similarity matching across separate runs.
+    """
+    error_pattern = re.compile(r"(error|exception|fail|traceback)", re.IGNORECASE)
+    lines = log_text.splitlines()
+    error_lines = [line.strip() for line in lines if error_pattern.search(line)]
+
+    if not error_lines:
+        # Fall back to the last few non-empty lines if no obvious error keyword found
+        non_empty = [l.strip() for l in lines if l.strip()]
+        error_lines = non_empty[-max_lines:]
+
+    # Take the last N matches — usually the most specific/final error, not
+    # earlier warnings — and strip volatile bits (timestamps, run-specific
+    # paths/IDs) so identical error types match even across different runs.
+    signature_lines = error_lines[-max_lines:]
+    signature = " | ".join(signature_lines)
+    signature = re.sub(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\S*", "", signature)  # timestamps
+    signature = re.sub(r"\b[0-9a-f]{7,40}\b", "", signature)  # commit SHAs / hex IDs
+    signature = re.sub(r"\s+", " ", signature).strip()
+    return signature

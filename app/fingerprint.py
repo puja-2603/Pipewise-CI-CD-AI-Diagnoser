@@ -1,4 +1,5 @@
 import os
+import json
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
@@ -13,8 +14,18 @@ def embed(text: str) -> list[float]:
     return vec.tolist()
 
 
+def _as_float_list(embedding) -> list[float]:
+    """Supabase's REST API returns pgvector columns as a JSON string
+    (e.g. '[0.123, 0.456, ...]') rather than a native list, so we need
+    to parse it before doing any math on it."""
+    if isinstance(embedding, str):
+        return json.loads(embedding)
+    return embedding
+
+
 def cosine_similarity(a: list[float], b: list[float]) -> float:
-    a, b = np.array(a), np.array(b)
+    a = np.array(_as_float_list(a))
+    b = np.array(_as_float_list(b))
     return float(np.dot(a, b))  # already normalized, so dot product == cosine similarity
 
 

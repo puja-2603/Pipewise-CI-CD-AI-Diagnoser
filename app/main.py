@@ -2,7 +2,9 @@ import os
 import hmac
 import hashlib
 from fastapi import FastAPI, Request, HTTPException
+from dotenv import load_dotenv
 
+load_dotenv()
 from app.models import WebhookPayload
 from app import github_client, ai_diagnosis, fingerprint, db
 
@@ -72,7 +74,8 @@ async def process_failure(
     cost = ai_diagnosis.estimate_cost_usd(tokens_used)
 
     # 3. Fingerprint + recurrence check
-    embedding = fingerprint.embed(diagnosis.root_cause)
+    error_signature = ai_diagnosis.extract_error_signature(logs)
+    embedding = fingerprint.embed(error_signature)
     past_failures = db.get_recent_failures(repo_full_name)
     match, similarity = fingerprint.find_most_similar(embedding, past_failures)
 
