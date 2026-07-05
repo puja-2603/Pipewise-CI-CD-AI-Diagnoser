@@ -10,13 +10,7 @@ HEADERS = {
     "X-GitHub-Api-Version": "2022-11-28",
 }
 
-
 async def fetch_failed_job_logs(repo_full_name: str, run_id: int) -> str:
-    """
-    Fetch logs for all failed jobs in a workflow run.
-    GitHub returns a zip; for MVP simplicity we fetch the per-job logs endpoint
-    which returns plain text for a single job, so we first find the failed job(s).
-    """
     async with httpx.AsyncClient(headers=HEADERS, timeout=30) as client:
         jobs_resp = await client.get(
             f"{GITHUB_API}/repos/{repo_full_name}/actions/runs/{run_id}/jobs"
@@ -30,14 +24,23 @@ async def fetch_failed_job_logs(repo_full_name: str, run_id: int) -> str:
 
         all_logs = []
         for job in failed_jobs:
+            # Don't auto-follow here — we need to inspect the redirect first
             log_resp = await client.get(
-                f"{GITHUB_API}/repos/{repo_full_name}/actions/jobs/{job['id']}/logs"
+                f"{GITHUB_API}/repos/{repo_full_name}/actions/jobs/{job['id']}/logs",
+                follow_redirects=False,
             )
-            if log_resp.status_code == 200:
+            if log_resp.status_code in (302, 301) and "location" in log_resp.headers:
+                blob_url = log_resp.headers["location"]
+                # Fetch the redirect target WITHOUT our GitHub auth headers
+                async with httpx.AsyncClient(timeout=30) as blob_client:
+                    blob_resp = await blob_client.get(blob_url)
+                    if blob_resp.status_code == 200:
+                        all_logs.append(f"=== Job: {job['name']} ===\n{blob_resp.text}")
+            elif log_resp.status_code == 200:
+                # Some GitHub Enterprise setups return logs directly, no redirect
                 all_logs.append(f"=== Job: {job['name']} ===\n{log_resp.text}")
 
         combined = "\n\n".join(all_logs)
-        # Truncate to keep prompt size reasonable — keep the tail, where errors usually live
         return combined[-12000:]
 
 
