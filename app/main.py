@@ -124,18 +124,28 @@ async def process_failure(
 
     auto_fix_threshold = float(os.environ.get("AUTO_FIX_CONFIDENCE_THRESHOLD", 0.85))
 
-    if (
-        diagnosis.safe_to_auto_fix
-        and diagnosis.confidence >= auto_fix_threshold
-        and diagnosis.proposed_patch
-        and diagnosis.fix_category in ("env_var_missing", "dependency_mismatch", "lint_format")
-    ):
-        comment_body += (
-            "\n\n_An automated fix PR was attempted for this high-confidence, "
-            "low-risk failure category — check open PRs on this repo._"
-        )
-        # pr_url = await github_client.open_auto_fix_pr(...)
-        # db.mark_auto_fix(stored["id"], pr_url)
+        if (
+            diagnosis.safe_to_auto_fix
+            and diagnosis.confidence >= auto_fix_threshold
+            and diagnosis.file_path
+            and diagnosis.new_file_content
+            and diagnosis.fix_category in ("env_var_missing", "dependency_mismatch", "lint_format")
+        ):
+            try:
+                pr_url = await github_client.open_auto_fix_pr(
+                    repo_full_name,
+                    base_branch=branch,
+                    file_path=diagnosis.file_path,
+                    new_content=diagnosis.new_file_content,
+                    fix_summary=diagnosis.fix_suggestion,
+                )
+                db.mark_auto_fix(stored["id"], pr_url)
+                comment_body += f"\n\n_An automated fix PR was opened: {pr_url}_"
+            except Exception as e:
+                comment_body += (
+                    "\n\n_Attempted an automated fix, but PR creation failed "
+                    f"({type(e).__name__}) — please fix manually._"
+                )
 
     await github_client.post_pr_comment(repo_full_name, commit_sha, comment_body, pr_number)
 

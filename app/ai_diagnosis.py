@@ -16,11 +16,23 @@ Respond ONLY with a JSON object matching this schema, no preamble, no markdown f
   "fix_suggestion": "concrete, actionable fix a human would need to do",
   "confidence": 0.0 to 1.0,
   "safe_to_auto_fix": true or false,
-  "proposed_patch": null or the full corrected content of ONE file, only if you are highly
-     confident (>0.85) AND the fix is a simple, mechanical, single-file change
+  "file_path": null or the exact relative path of the ONE file that needs to change
+     (e.g. "requirements.txt", "package.json"), only if safe_to_auto_fix is true.
+     You must infer this from file names/paths visible in the log itself —
+     never guess a path that doesn't appear in the log.
+  "new_file_content": null or the FULL corrected content of that file, only if you are
+     highly confident (>0.85) AND the fix is a simple, mechanical, single-file change
      (e.g. a version pin in requirements.txt/package.json, a missing key in a config file,
-     an auto-formattable file). Never propose a patch for logic bugs, flaky tests,
-     or anything requiring judgment.
+     an auto-formattable file). This must be the complete file content, not a diff or
+     snippet — the caller will overwrite the file with exactly this string.
+     Never propose this for logic bugs, flaky tests, or anything requiring judgment,
+     or if you cannot see the file's current full content in the log.
+}
+
+Important: only set file_path and new_file_content together, and only when you can see
+enough of the original file's content/context in the log to safely reconstruct the full
+corrected file. If you cannot see the whole file, set both to null and safe_to_auto_fix
+to false, even if you know what line is wrong.
 """
 
 

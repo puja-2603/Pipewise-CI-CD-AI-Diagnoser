@@ -9,6 +9,8 @@ class Diagnosis(BaseModel):
     confidence: float          # 0.0 - 1.0
     safe_to_auto_fix: bool
     proposed_patch: Optional[str] = None   # unified diff or file content, only if safe_to_auto_fix
+    file_path: str | None = None
+    new_file_content: str | None = None
 
 
 class WebhookPayload(BaseModel):
