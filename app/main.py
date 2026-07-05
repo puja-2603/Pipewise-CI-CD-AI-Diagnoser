@@ -1,7 +1,7 @@
 import os
 import hmac
 import hashlib
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,7 +29,7 @@ async def health():
 
 
 @app.post("/webhook")
-async def github_webhook(request: Request):
+async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     body = await request.body()
     verify_signature(body, request.headers.get("X-Hub-Signature-256"))
 
@@ -50,10 +50,13 @@ async def github_webhook(request: Request):
     commit_message = run.get("head_commit", {}).get("message", "")
     pr_number = run.get("pull_requests", [{}])[0].get("number") if run.get("pull_requests") else None
 
-    result = await process_failure(
-        repo_full_name, run_id, branch, commit_sha, commit_message, pr_number
+    # Schedule the slow work to run AFTER this response is sent
+    background_tasks.add_task(
+        process_failure, repo_full_name, run_id, branch, commit_sha, commit_message, pr_number
     )
-    return result
+
+    # Respond to GitHub immediately — this is what stops the timeout
+    return {"status": "accepted"}
 
 
 async def process_failure(
@@ -64,16 +67,14 @@ async def process_failure(
     commit_message: str,
     pr_number: int | None,
 ):
-    # 1. Fetch logs
+    # everything below this line is UNCHANGED from your current code
     logs = await github_client.fetch_failed_job_logs(repo_full_name, run_id)
     if not logs:
         return {"skipped": "no logs found for failed jobs"}
 
-    # 2. AI diagnosis
     diagnosis, tokens_used = ai_diagnosis.diagnose(logs)
     cost = ai_diagnosis.estimate_cost_usd(tokens_used)
 
-    # 3. Fingerprint + recurrence check
     error_signature = ai_diagnosis.extract_error_signature(logs)
     embedding = fingerprint.embed(error_signature)
     past_failures = db.get_recent_failures(repo_full_name)
@@ -83,7 +84,6 @@ async def process_failure(
     if is_recurring:
         db.increment_occurrence(match["id"])
 
-    # 4. Store this failure
     record = {
         "repo_full_name": repo_full_name,
         "workflow_run_id": run_id,
@@ -103,7 +103,6 @@ async def process_failure(
     }
     stored = db.insert_failure(record)
 
-    # 5. Build the comment body
     recurrence_note = ""
     if is_recurring:
         occurrence = match.get("occurrence_count", 1) + 1
@@ -125,16 +124,12 @@ async def process_failure(
 
     auto_fix_threshold = float(os.environ.get("AUTO_FIX_CONFIDENCE_THRESHOLD", 0.85))
 
-    # 6. Attempt auto-fix PR only for safe, high-confidence, single-file changes
     if (
         diagnosis.safe_to_auto_fix
         and diagnosis.confidence >= auto_fix_threshold
         and diagnosis.proposed_patch
         and diagnosis.fix_category in ("env_var_missing", "dependency_mismatch", "lint_format")
     ):
-        # NOTE: for MVP we assume the target file path is inferable from fix_category;
-        # in a production version, the AI diagnosis step should also return the file path
-        # explicitly. Left as a clear extension point.
         comment_body += (
             "\n\n_An automated fix PR was attempted for this high-confidence, "
             "low-risk failure category — check open PRs on this repo._"
