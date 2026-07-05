@@ -74,6 +74,11 @@ async def process_failure(
     diagnosis, tokens_used = ai_diagnosis.diagnose(logs)
     cost = ai_diagnosis.estimate_cost_usd(tokens_used)
 
+    print(f"DEBUG diagnosis: safe_to_auto_fix={diagnosis.safe_to_auto_fix}, "
+          f"confidence={diagnosis.confidence}, file_path={diagnosis.file_path!r}, "
+          f"new_file_content={'<present>' if diagnosis.new_file_content else None}, "
+          f"fix_category={diagnosis.fix_category}", flush=True)
+
     error_signature = ai_diagnosis.extract_error_signature(logs)
     embedding = fingerprint.embed(error_signature)
     past_failures = db.get_recent_failures(repo_full_name)
