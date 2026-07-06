@@ -85,3 +85,14 @@ def extract_error_signature(log_text: str, max_lines: int = 5) -> str:
     signature = re.sub(r"\b[0-9a-f]{7,40}\b", "", signature)  # commit SHAs / hex IDs
     signature = re.sub(r"\s+", " ", signature).strip()
     return signature
+
+def extract_black_target_file(log_text: str) -> str | None:
+    """
+    Deterministically pull the filename black complains about, e.g.:
+    'would reformat badly_formatted.py' or 'reformatted badly_formatted.py'
+    This avoids relying on the LLM to name the file correctly.
+    """
+    match = re.search(r"(?:would reformat|reformatted)\s+(\S+\.py)", log_text)
+    if match:
+        return match.group(1)
+    return None

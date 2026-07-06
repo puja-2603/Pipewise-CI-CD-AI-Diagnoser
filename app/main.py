@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 from app.models import WebhookPayload
-from app import github_client, ai_diagnosis, fingerprint, db
+from app import github_client, ai_diagnosis, fingerprint, db, auto_fix
 
 app = FastAPI(title="CI/CD AI Diagnoser")
 
@@ -127,15 +127,44 @@ async def process_failure(
     )
 
     auto_fix_threshold = float(os.environ.get("AUTO_FIX_CONFIDENCE_THRESHOLD", 0.85))
+    pr_url = None
 
-    if (
-        diagnosis.safe_to_auto_fix
-        and diagnosis.confidence >= auto_fix_threshold
-        and diagnosis.file_path
-        and diagnosis.new_file_content
-        and diagnosis.fix_category in ("env_var_missing", "dependency_mismatch", "lint_format")
-    ):
-        try:
+    try:
+        if diagnosis.confidence >= auto_fix_threshold and diagnosis.fix_category == "lint_format":
+            # Deterministic path: don't trust the LLM to reconstruct file
+            # content. Find the target file (AI's file_path, or parsed
+            # directly from the log as a fallback), fetch its real content,
+            # and run black on it ourselves — zero hallucination risk.
+            target_file = diagnosis.file_path or ai_diagnosis.extract_black_target_file(logs)
+            print(f"DEBUG lint_format path: target_file={target_file!r}", flush=True)
+
+            if target_file:
+                original_content = await github_client.fetch_file_content(
+                    repo_full_name, target_file, branch
+                )
+                if original_content:
+                    formatted_content, changed = auto_fix.format_with_black(original_content)
+                    print(f"DEBUG black formatting: changed={changed}", flush=True)
+                    if changed:
+                        pr_url = await github_client.open_auto_fix_pr(
+                            repo_full_name,
+                            base_branch=branch,
+                            file_path=target_file,
+                            new_content=formatted_content,
+                            fix_summary=f"Apply black formatting to {target_file}",
+                        )
+                        db.mark_auto_fix(stored["id"], pr_url)
+
+        elif (
+            diagnosis.safe_to_auto_fix
+            and diagnosis.confidence >= auto_fix_threshold
+            and diagnosis.file_path
+            and diagnosis.new_file_content
+            and diagnosis.fix_category in ("env_var_missing", "dependency_mismatch")
+        ):
+            # LLM-authored path: only used where no deterministic tool
+            # exists, and only when the LLM was confident enough to
+            # reconstruct the full corrected file itself.
             pr_url = await github_client.open_auto_fix_pr(
                 repo_full_name,
                 base_branch=branch,
@@ -144,12 +173,15 @@ async def process_failure(
                 fix_summary=diagnosis.fix_suggestion,
             )
             db.mark_auto_fix(stored["id"], pr_url)
-            comment_body += f"\n\n_An automated fix PR was opened: {pr_url}_"
-        except Exception as e:
-            comment_body += (
-                "\n\n_Attempted an automated fix, but PR creation failed "
-                f"({type(e).__name__}) — please fix manually._"
-            )
+
+        if pr_url:
+            comment_body += f"\n\n**An automated fix PR was opened:** {pr_url}"
+
+    except Exception as e:
+        comment_body += (
+            "\n\n_Attempted an automated fix, but it failed "
+            f"({type(e).__name__}) — please fix manually._"
+        )
 
     await github_client.post_pr_comment(repo_full_name, commit_sha, comment_body, pr_number)
 
@@ -158,4 +190,5 @@ async def process_failure(
         "is_recurring": is_recurring,
         "fix_category": diagnosis.fix_category,
         "confidence": diagnosis.confidence,
+        "auto_fix_pr": pr_url,
     }

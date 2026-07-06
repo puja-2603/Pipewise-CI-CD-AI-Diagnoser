@@ -43,6 +43,21 @@ async def fetch_failed_job_logs(repo_full_name: str, run_id: int) -> str:
         combined = "\n\n".join(all_logs)
         return combined[-12000:]
 
+async def fetch_file_content(repo_full_name: str, file_path: str, ref: str) -> str | None:
+    """
+    Fetch a single file's current text content from the repo at a given ref
+    (branch/commit). Returns None if the file doesn't exist there.
+    """
+    import base64
+    async with httpx.AsyncClient(headers=HEADERS, timeout=30) as client:
+        resp = await client.get(
+            f"{GITHUB_API}/repos/{repo_full_name}/contents/{file_path}",
+            params={"ref": ref},
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        return base64.b64decode(data["content"]).decode("utf-8")
 
 async def post_pr_comment(repo_full_name: str, commit_sha: str, body: str, pr_number: int | None):
     """Post the diagnosis as a comment on the PR if we have one, else on the commit."""
