@@ -88,9 +88,11 @@ def extract_error_signature(log_text: str, max_lines: int = 5) -> str:
 
 def extract_black_target_file(log_text: str) -> str | None:
     """
-    Deterministically pull the filename black complains about, e.g.:
-    'would reformat badly_formatted.py' or 'reformatted badly_formatted.py'
-    This avoids relying on the LLM to name the file correctly.
+    Pull the raw filename/path black complains about, e.g.:
+    'would reformat badly_formatted.py' or 'reformatted /some/runner/path/x.py'
+    This may be a full runner-specific path — resolving it to the actual
+    repo-relative path happens separately via github_client.resolve_repo_relative_path,
+    which checks the real repo tree instead of guessing at path conventions.
     """
     match = re.search(r"(?:would reformat|reformatted)\s+(\S+\.py)", log_text)
     if match:

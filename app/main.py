@@ -135,8 +135,13 @@ async def process_failure(
             # content. Find the target file (AI's file_path, or parsed
             # directly from the log as a fallback), fetch its real content,
             # and run black on it ourselves — zero hallucination risk.
-            target_file = diagnosis.file_path or ai_diagnosis.extract_black_target_file(logs)
-            print(f"DEBUG lint_format path: target_file={target_file!r}", flush=True)
+            raw_target = diagnosis.file_path or ai_diagnosis.extract_black_target_file(logs)
+            target_file = None
+            if raw_target:
+                target_file = await github_client.resolve_repo_relative_path(
+                    repo_full_name, branch, raw_target
+                )
+            print(f"DEBUG lint_format path: raw={raw_target!r} resolved={target_file!r}", flush=True)
 
             if target_file:
                 original_content = await github_client.fetch_file_content(

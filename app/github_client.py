@@ -43,6 +43,38 @@ async def fetch_failed_job_logs(repo_full_name: str, run_id: int) -> str:
         combined = "\n\n".join(all_logs)
         return combined[-12000:]
 
+async def resolve_repo_relative_path(repo_full_name: str, ref: str, raw_path: str) -> str | None:
+    """
+    Given ANY path string pulled from a CI log — could be an absolute path
+    from a GitHub-hosted Linux runner, a Windows runner, a self-hosted
+    runner, or a Docker container, in any format — resolve it to the real
+    repo-relative path by matching against the actual file tree.
+    """
+    clean_path = raw_path.replace("\\", "/").strip()
+    basename = clean_path.rsplit("/", 1)[-1]
+
+    async with httpx.AsyncClient(headers=HEADERS, timeout=30) as client:
+        tree_resp = await client.get(
+            f"{GITHUB_API}/repos/{repo_full_name}/git/trees/{ref}",
+            params={"recursive": "true"},
+        )
+        if tree_resp.status_code != 200:
+            return None
+        tree = tree_resp.json().get("tree", [])
+
+    candidates = [
+        entry["path"] for entry in tree
+        if entry["type"] == "blob" and entry["path"].rsplit("/", 1)[-1] == basename
+    ]
+
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    candidates.sort(key=lambda c: len(os.path.commonprefix([c[::-1], clean_path[::-1]])), reverse=True)
+    return candidates[0]
+
 async def fetch_file_content(repo_full_name: str, file_path: str, ref: str) -> str | None:
     """
     Fetch a single file's current text content from the repo at a given ref
